@@ -19,7 +19,10 @@ import {
   Boxes,
   TrendingUp,
   FileBarChart,
-  Settings,
+  Package,
+  Truck,
+  MapPin,
+  UserCog,
   Wine,
   LogOut,
   Menu,
@@ -33,7 +36,10 @@ import { PartnersModule } from "@/components/modules/partners"
 import { StockModule } from "@/components/modules/stock"
 import { TradingModule } from "@/components/modules/trading"
 import { ReportsModule } from "@/components/modules/reports"
-import { SettingsModule } from "@/components/modules/settings"
+import { ProductsModule } from "@/components/modules/products"
+import { SuppliersModule } from "@/components/modules/suppliers"
+import { LocationsModule } from "@/components/modules/locations"
+import { UsersModule } from "@/components/modules/users"
 
 interface NavItem {
   key: ModuleKey
@@ -42,14 +48,32 @@ interface NavItem {
   adminOnly?: boolean
 }
 
-const NAV_ITEMS: NavItem[] = [
-  { key: "dashboard", label: "Tableau de bord", icon: LayoutDashboard },
-  { key: "sales", label: "Ventes", icon: ShoppingCart },
-  { key: "partners", label: "Partenaires", icon: Users },
-  { key: "stock", label: "Stock", icon: Boxes },
-  { key: "trading", label: "Achat-vente", icon: TrendingUp, adminOnly: true },
-  { key: "reports", label: "Bilans", icon: FileBarChart },
-  { key: "settings", label: "Paramètres", icon: Settings, adminOnly: true },
+interface NavSection {
+  label: string
+  items: NavItem[]
+}
+
+const NAV_SECTIONS: NavSection[] = [
+  {
+    label: "Principal",
+    items: [
+      { key: "dashboard", label: "Tableau de bord", icon: LayoutDashboard },
+      { key: "sales", label: "Ventes", icon: ShoppingCart },
+      { key: "partners", label: "Partenaires", icon: Users },
+      { key: "stock", label: "Stock", icon: Boxes },
+      { key: "trading", label: "Achat-vente", icon: TrendingUp, adminOnly: true },
+      { key: "reports", label: "Bilans", icon: FileBarChart },
+    ],
+  },
+  {
+    label: "Référentiels",
+    items: [
+      { key: "products", label: "Produits", icon: Package, adminOnly: true },
+      { key: "suppliers", label: "Fournisseurs", icon: Truck, adminOnly: true },
+      { key: "locations", label: "Emplacements", icon: MapPin, adminOnly: true },
+      { key: "users", label: "Utilisateurs", icon: UserCog, adminOnly: true },
+    ],
+  },
 ]
 
 const MODULES: Record<ModuleKey, React.ComponentType> = {
@@ -59,7 +83,10 @@ const MODULES: Record<ModuleKey, React.ComponentType> = {
   stock: StockModule,
   trading: TradingModule,
   reports: ReportsModule,
-  settings: SettingsModule,
+  products: ProductsModule,
+  suppliers: SuppliersModule,
+  locations: LocationsModule,
+  users: UsersModule,
 }
 
 export function AppShell() {
@@ -69,10 +96,16 @@ export function AppShell() {
 
   const role = session?.user?.role ?? "EMPLOYEE"
   const isAdmin = role === "ADMIN"
-  const visibleItems = NAV_ITEMS.filter((i) => !i.adminOnly || isAdmin)
+
+  // Filter sections by role
+  const visibleSections = NAV_SECTIONS.map((section) => ({
+    ...section,
+    items: section.items.filter((i) => !i.adminOnly || isAdmin),
+  })).filter((s) => s.items.length > 0)
 
   const ActiveComponent = MODULES[activeModule] ?? DashboardModule
-  const activeItem = NAV_ITEMS.find((i) => i.key === activeModule)
+  const allItems = NAV_SECTIONS.flatMap((s) => s.items)
+  const activeItem = allItems.find((i) => i.key === activeModule)
 
   const userName = session?.user?.name ?? "Utilisateur"
   const initials = userName
@@ -83,26 +116,35 @@ export function AppShell() {
     .toUpperCase()
 
   const navList = (
-    <nav className="flex flex-col gap-1 px-3 py-2">
-      {visibleItems.map((item) => {
-        const Icon = item.icon
-        const active = activeModule === item.key
-        return (
-          <button
-            key={item.key}
-            onClick={() => setModule(item.key)}
-            className={cn(
-              "flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-colors w-full text-left",
-              active
-                ? "bg-primary text-primary-foreground shadow-sm"
-                : "text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground",
-            )}
-          >
-            <Icon className="w-[18px] h-[18px] shrink-0" />
-            {item.label}
-          </button>
-        )
-      })}
+    <nav className="flex flex-col px-3 py-2 gap-4 overflow-y-auto scroll-thin">
+      {visibleSections.map((section) => (
+        <div key={section.label}>
+          <p className="px-3 mb-1 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground/70">
+            {section.label}
+          </p>
+          <div className="flex flex-col gap-1">
+            {section.items.map((item) => {
+              const Icon = item.icon
+              const active = activeModule === item.key
+              return (
+                <button
+                  key={item.key}
+                  onClick={() => setModule(item.key)}
+                  className={cn(
+                    "flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-colors w-full text-left",
+                    active
+                      ? "bg-primary text-primary-foreground shadow-sm"
+                      : "text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground",
+                  )}
+                >
+                  <Icon className="w-[18px] h-[18px] shrink-0" />
+                  {item.label}
+                </button>
+              )
+            })}
+          </div>
+        </div>
+      ))}
     </nav>
   )
 
@@ -154,8 +196,8 @@ export function AppShell() {
         {/* Sidebar desktop */}
         <aside className="hidden md:flex flex-col w-60 border-r bg-sidebar shrink-0">
           {brand}
-          {navList}
-          <div className="mt-auto p-3 border-t border-sidebar-border">
+          <div className="flex-1 overflow-y-auto scroll-thin">{navList}</div>
+          <div className="p-3 border-t border-sidebar-border">
             <div className="flex items-center gap-2 px-2 py-2">
               <Avatar className="w-8 h-8">
                 <AvatarFallback className="bg-primary/15 text-primary text-xs font-semibold">

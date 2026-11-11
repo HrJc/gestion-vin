@@ -9,7 +9,10 @@ export type ModuleKey =
   | "stock"
   | "trading"
   | "reports"
-  | "settings"
+  | "products"
+  | "suppliers"
+  | "locations"
+  | "users"
 
 interface AppState {
   activeModule: ModuleKey
