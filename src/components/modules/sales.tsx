@@ -14,6 +14,7 @@ import { ScrollArea } from "@/components/ui/scroll-area"
 import { Plus, Loader2, Search, ShoppingCart, CheckCircle2, AlertCircle } from "lucide-react"
 import { toast } from "sonner"
 import { formatMGA, formatDate, paymentStatusLabel, paymentStatusColor, formatQty } from "@/lib/format"
+import { EditDialog, EditButton, ArchiveButton, patchRecord, deleteRecord } from "@/components/create-dialog"
 
 interface Partner {
   id: string
@@ -126,6 +127,21 @@ export function SalesModule() {
     onError: (e: Error) => toast.error(e.message),
   })
 
+  const [editOpen, setEditOpen] = useState(false)
+  const [editSale, setEditSale] = useState<Sale | null>(null)
+
+  const editMut = useMutation({
+    mutationFn: async ({ id, payload }: { id: string; payload: Record<string, unknown> }) => patchRecord(`/api/sales/${id}`, payload),
+    onSuccess: () => { toast.success("Vente modifiée"); setEditOpen(false); qc.invalidateQueries({ queryKey: ["sales"] }) },
+    onError: (e: Error) => toast.error(e.message),
+  })
+
+  const deleteMut = useMutation({
+    mutationFn: async (id: string) => deleteRecord(`/api/sales/${id}`),
+    onSuccess: () => { toast.success("Vente annulée — stock réintégré"); qc.invalidateQueries({ queryKey: ["sales"] }); qc.invalidateQueries({ queryKey: ["dashboard"] }); qc.invalidateQueries({ queryKey: ["stock"] }) },
+    onError: (e: Error) => toast.error(e.message),
+  })
+
   return (
     <div className="space-y-4">
       {/* Barre d'actions */}
@@ -200,7 +216,7 @@ export function SalesModule() {
                   <TableHead className="text-right">Total</TableHead>
                   <TableHead className="text-right">Payé</TableHead>
                   <TableHead>Statut</TableHead>
-                  <TableHead className="text-right">Action</TableHead>
+                  <TableHead className="text-right w-[160px]">Actions</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -217,18 +233,22 @@ export function SalesModule() {
                     <TableCell>
                       <Badge className={`text-[10px] ${paymentStatusColor(s.paymentStatus)}`}>{paymentStatusLabel(s.paymentStatus)}</Badge>
                     </TableCell>
-                    <TableCell className="text-right">
-                      {s.due > 0 && (
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          className="h-7 text-xs"
-                          disabled={payMutation.isPending}
-                          onClick={() => payMutation.mutate({ saleId: s.id, amount: s.due, method: s.paymentMethod ?? "MOBILE_MONEY" })}
-                        >
-                          <CheckCircle2 className="w-3 h-3 mr-1" /> Encaisser
-                        </Button>
-                      )}
+                    <TableCell>
+                      <div className="flex items-center justify-end gap-1">
+                        {s.due > 0 && (
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            className="h-7 text-xs"
+                            disabled={payMutation.isPending}
+                            onClick={() => payMutation.mutate({ saleId: s.id, amount: s.due, method: s.paymentMethod ?? "MOBILE_MONEY" })}
+                          >
+                            <CheckCircle2 className="w-3 h-3 mr-1" /> Encaisser
+                          </Button>
+                        )}
+                        <EditButton onClick={() => { setEditSale(s); setEditOpen(true) }} />
+                        <ArchiveButton onConfirm={() => deleteMut.mutate(s.id)} loading={deleteMut.isPending} label="Annuler" description="La vente sera annulée. Le stock sera réintégré automatiquement (mouvement inverse). L'historique est conservé." />
+                      </div>
                     </TableCell>
                   </TableRow>
                 ))}
@@ -237,6 +257,22 @@ export function SalesModule() {
           </ScrollArea>
         )}
       </Card>
+
+      <EditDialog
+        key={editSale?.id ?? "none"}
+        open={editOpen}
+        onOpenChange={setEditOpen}
+        title="Modifier la vente"
+        onSubmit={(payload) => editSale && editMut.mutate({ id: editSale.id, payload })}
+        loading={editMut.isPending}
+        record={editSale as Record<string, unknown> | null}
+        fields={[
+          { name: "deliveredClient", label: "Client livré", placeholder: "DON BOSCO…" },
+          { name: "paymentStatus", label: "Statut paiement", select: [{ value: "PAID", label: "Payé" }, { value: "PARTIAL", label: "Partiel" }, { value: "UNPAID", label: "À payer" }] },
+          { name: "paymentMethod", label: "Mode paiement", select: [{ value: "CASH", label: "Espèces" }, { value: "MOBILE_MONEY", label: "Mobile Money" }] },
+          { name: "note", label: "Note", placeholder: "Note…" },
+        ]}
+      />
     </div>
   )
 }

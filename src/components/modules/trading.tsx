@@ -12,6 +12,7 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { Plus, TrendingUp, TrendingDown, Loader2, Wallet, ArrowUpCircle, ArrowDownCircle, Bell } from "lucide-react"
+import { EditDialog, EditButton, ArchiveButton, patchRecord, deleteRecord } from "@/components/create-dialog"
 import { toast } from "sonner"
 import { formatMGA, formatPct, formatQty, formatDate } from "@/lib/format"
 import { ResponsiveContainer, LineChart, Line, XAxis, YAxis, Tooltip, CartesianGrid, ReferenceLine } from "recharts"
@@ -55,6 +56,21 @@ export function TradingModule() {
       return r.json()
     },
     onSuccess: () => { toast.success("Prix du marché mis à jour"); setPriceOpen(false); qc.invalidateQueries({ queryKey: ["trading"] }) },
+    onError: (e: Error) => toast.error(e.message),
+  })
+
+  const [editOpen, setEditOpen] = useState(false)
+  const [editOp, setEditOp] = useState<Operation | null>(null)
+
+  const editMut = useMutation({
+    mutationFn: async ({ id, payload }: { id: string; payload: Record<string, unknown> }) => patchRecord(`/api/trading/operations/${id}`, payload),
+    onSuccess: () => { toast.success("Opération modifiée"); setEditOpen(false); qc.invalidateQueries({ queryKey: ["trading"] }); qc.invalidateQueries({ queryKey: ["trading-ops"] }) },
+    onError: (e: Error) => toast.error(e.message),
+  })
+
+  const deleteMut = useMutation({
+    mutationFn: async (id: string) => deleteRecord(`/api/trading/operations/${id}`),
+    onSuccess: () => { toast.success("Opération supprimée"); qc.invalidateQueries({ queryKey: ["trading"] }); qc.invalidateQueries({ queryKey: ["trading-ops"] }) },
     onError: (e: Error) => toast.error(e.message),
   })
 
@@ -128,7 +144,7 @@ export function TradingModule() {
         <CardContent>
           <ScrollArea className="h-64">
             <Table>
-              <TableHeader><TableRow><TableHead className="w-[80px]">Date</TableHead><TableHead>Type</TableHead><TableHead>Marchandise</TableHead><TableHead className="text-right">Qté</TableHead><TableHead className="text-right">P.U.</TableHead><TableHead className="text-right">Frais</TableHead><TableHead className="text-right">Total</TableHead><TableHead>Contrepartie</TableHead><TableHead>Statut</TableHead></TableRow></TableHeader>
+              <TableHeader><TableRow><TableHead className="w-[80px]">Date</TableHead><TableHead>Type</TableHead><TableHead>Marchandise</TableHead><TableHead className="text-right">Qté</TableHead><TableHead className="text-right">P.U.</TableHead><TableHead className="text-right">Frais</TableHead><TableHead className="text-right">Total</TableHead><TableHead>Contrepartie</TableHead><TableHead>Statut</TableHead><TableHead className="text-right w-[90px]">Actions</TableHead></TableRow></TableHeader>
               <TableBody>
                 {ops?.map((o) => (
                   <TableRow key={o.id}>
@@ -146,6 +162,12 @@ export function TradingModule() {
                     <TableCell className="text-right font-semibold">{formatMGA(o.quantity * o.unitPrice + o.fees)}</TableCell>
                     <TableCell className="text-xs text-muted-foreground">{o.counterparty ?? "—"}</TableCell>
                     <TableCell><Badge variant="outline" className="text-[10px]">{o.paymentStatus === "PAID" ? "Payé" : o.paymentStatus === "PARTIAL" ? "Partiel" : "À payer"}</Badge></TableCell>
+                    <TableCell>
+                      <div className="flex items-center justify-end gap-1">
+                        <EditButton onClick={() => { setEditOp(o); setEditOpen(true) }} />
+                        <ArchiveButton onConfirm={() => deleteMut.mutate(o.id)} loading={deleteMut.isPending} label="Supprimer" description="L'opération sera définitivement supprimée. Le stock et les gains seront recalculés." />
+                      </div>
+                    </TableCell>
                   </TableRow>
                 ))}
               </TableBody>
@@ -156,6 +178,24 @@ export function TradingModule() {
 
       {/* Dialogs */}
       <OperationDialog open={opOpen} onOpenChange={setOpOpen} marchandises={data.marchandises} onSubmit={(p) => opMutation.mutate(p)} loading={opMutation.isPending} />
+      <EditDialog
+        key={editOp?.id ?? "none"}
+        open={editOpen}
+        onOpenChange={setEditOpen}
+        title="Modifier l'opération"
+        onSubmit={(payload) => editOp && editMut.mutate({ id: editOp.id, payload })}
+        loading={editMut.isPending}
+        record={editOp as Record<string, unknown> | null}
+        fields={[
+          { name: "type", label: "Type", select: [{ value: "BUY", label: "Achat" }, { value: "SELL", label: "Vente" }] },
+          { name: "quantity", label: "Quantité", type: "number" },
+          { name: "unitPrice", label: "Prix unitaire", type: "number" },
+          { name: "fees", label: "Frais", type: "number", default: "0" },
+          { name: "counterparty", label: "Contrepartie" },
+          { name: "paymentStatus", label: "Statut paiement", select: [{ value: "PAID", label: "Payé" }, { value: "PARTIAL", label: "Partiel" }, { value: "UNPAID", label: "À payer" }] },
+          { name: "note", label: "Note" },
+        ]}
+      />
       <PriceDialog open={priceOpen} onOpenChange={setPriceOpen} marchandises={data.marchandises} onSubmit={(p) => priceMutation.mutate(p)} loading={priceMutation.isPending} />
       <ChartDialog merch={chartMerch} onClose={() => setChartMerch(null)} />
     </div>

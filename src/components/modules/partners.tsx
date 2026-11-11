@@ -14,6 +14,7 @@ import { ScrollArea } from "@/components/ui/scroll-area"
 import { Plus, Users, Loader2, Phone, MapPin, Tag, History } from "lucide-react"
 import { toast } from "sonner"
 import { formatMGA, formatDate, partnerTypeLabel } from "@/lib/format"
+import { ArchiveButton, deleteRecord } from "@/components/create-dialog"
 
 interface PartnerPrice { id: string; productId: string; unitPrice: number; discountPct: number; validFrom: string; validTo: string | null; product: { id: string; code: string; name: string; unit: string } }
 interface Partner {
@@ -49,6 +50,12 @@ export function PartnersModule() {
     onError: (e: Error) => toast.error(e.message),
   })
 
+  const archiveMut = useMutation({
+    mutationFn: async (id: string) => deleteRecord(`/api/partners/${id}`),
+    onSuccess: () => { toast.success("Partenaire archivé"); qc.invalidateQueries({ queryKey: ["partners"] }) },
+    onError: (e: Error) => toast.error(e.message),
+  })
+
   if (selected) {
     return <PartnerDetail partner={selected} products={products ?? []} onBack={() => setSelected(null)} />
   }
@@ -81,6 +88,9 @@ export function PartnersModule() {
                         <p className="font-semibold text-sm mt-1">{p.name}</p>
                       </div>
                       {!p.active && <Badge variant="secondary" className="text-[10px]">Inactif</Badge>}
+                      <div onClick={(e) => e.stopPropagation()}>
+                        <ArchiveButton onConfirm={() => archiveMut.mutate(p.id)} loading={archiveMut.isPending} label="Archiver" description={`Le partenaire ${p.code} sera archivé. Son historique de ventes et de prix est conservé.`} />
+                      </div>
                     </div>
                   </CardHeader>
                   <CardContent className="space-y-1.5 text-xs text-muted-foreground">
@@ -88,6 +98,9 @@ export function PartnersModule() {
                     {p.zone && <div className="flex items-center gap-1.5"><MapPin className="w-3 h-3" />{p.zone}</div>}
                     <div className="flex items-center gap-1.5"><Tag className="w-3 h-3" />{p.prices.length} prix · {p._count?.sales ?? 0} vente(s)</div>
                     <div className="flex items-center gap-1.5"><History className="w-3 h-3" />Délai paiement : {p.paymentTermsDays} j</div>
+                    <div className="flex items-center gap-1.5 pt-1 text-muted-foreground/70">
+                      <span className="text-[10px]">Cliquez pour détails · Modifier dans la fiche</span>
+                    </div>
                   </CardContent>
             </Card>
           ))}
