@@ -1,32 +1,337 @@
-// This is your Prisma schema file,
-// learn more about it in the docs: https://pris.ly/d/prisma-schema
-
-// Looking for ways to speed up your queries, or scale easily with your serverless or edge functions?
-// Try Prisma Accelerate: https://pris.ly/cli/accelerate-init
+// ============================================================
+// Application de gestion — Vin en vrac & Trading
+// Schéma de données (CDC version 2)
+// Compatible SQLite (dev) et MySQL (prod) — Prisma multi-base
+// Aucune suppression définitive : soft delete via archivedAt
+// ============================================================
 
 generator client {
   provider = "prisma-client-js"
 }
 
 datasource db {
+  // En dev : sqlite. En prod : remplacer par "mysql" + DATABASE_URL MySQL.
   provider = "sqlite"
   url      = env("DATABASE_URL")
 }
 
+// ------------------------------------------------------------
+// Auth & utilisateurs
+// ------------------------------------------------------------
+
 model User {
-  id        String   @id @default(cuid())
-  email     String   @unique
-  name      String?
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  id           String   @id @default(cuid())
+  email        String   @unique
+  name         String
+  passwordHash String
+  role         Role     @default(EMPLOYEE)
+  active       Boolean  @default(true)
+  archivedAt   DateTime?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  sales           Sale[]
+  payments        Payment[]
+  movements       StockMovement[]
+  tradeOps        TradeOperation[]
+  marketPrices    MarketPrice[]
+  inventoryCounts InventoryCount[]
+  auditLogs       AuditLog[]
 }
 
-model Post {
+enum Role {
+  ADMIN
+  EMPLOYEE
+  PARTNER
+}
+
+// ------------------------------------------------------------
+// Module 1 — Partenaires, ventes, paiements
+// ------------------------------------------------------------
+
+model Partner {
+  id               String      @id @default(cuid())
+  code             String      @unique // NLS, BEAHITSE, THM...
+  name             String
+  type             PartnerType
+  phone            String?
+  address          String?
+  zone             String?
+  startDate        DateTime?
+  paymentTermsDays Int         @default(0) // délai de paiement en jours
+  discountPct      Float       @default(0) // remise globale en %
+  active           Boolean     @default(true)
+  archivedAt       DateTime?
+  createdAt        DateTime    @default(now())
+  updatedAt        DateTime    @updatedAt
+
+  prices           PriceGrid[]
+  sales            Sale[]
+  payments         Payment[]
+}
+
+enum PartnerType {
+  RESELLER // revendeur
+  VENDOR   // vendeur
+}
+
+// Grille de prix par partenaire — historique des prix (validFrom/validTo)
+// Un changement de prix ne modifie pas les ventes passées.
+model PriceGrid {
+  id          String   @id @default(cuid())
+  partnerId   String
+  productId   String
+  unitPrice   Float
+  discountPct Float   @default(0)
+  validFrom   DateTime @default(now())
+  validTo     DateTime? // null = prix en cours
+  createdAt   DateTime @default(now())
+
+  partner     Partner  @relation(fields: [partnerId], references: [id])
+  product     Product  @relation(fields: [productId], references: [id])
+
+  @@unique([partnerId, productId, validFrom])
+}
+
+model Sale {
+  id                String        @id @default(cuid())
+  partnerId         String
+  deliveredClient   String?       // DON BOSCO, UFEEL — champ libre
+  productId         String
+  quantity          Float
+  unitPriceSnapshot Float         // prix unitaire figé à la vente
+  deliveryFee       Float         @default(0) // FL — frais de livraison
+  paymentStatus     PaymentStatus
+  paymentMethod     PaymentMethod?
+  photoUrl          String?
+  note              String?
+  date              DateTime      @default(now())
+  createdBy         String
+  createdAt         DateTime      @default(now())
+
+  partner           Partner       @relation(fields: [partnerId], references: [id])
+  product           Product       @relation(fields: [productId], references: [id])
+  payments          Payment[]
+  user              User          @relation(fields: [createdBy], references: [id])
+
+  @@index([date])
+  @@index([partnerId])
+}
+
+enum PaymentStatus {
+  PAID
+  PARTIAL
+  UNPAID
+}
+
+enum PaymentMethod {
+  CASH
+  MOBILE_MONEY
+}
+
+model Payment {
+  id        String        @id @default(cuid())
+  saleId    String
+  amount    Float
+  method    PaymentMethod
+  note      String?
+  date      DateTime      @default(now())
+  createdBy String
+
+  sale      Sale          @relation(fields: [saleId], references: [id])
+  partner   Partner?      @relation(fields: [partnerId], references: [id])
+  partnerId String?
+  user      User          @relation(fields: [createdBy], references: [id])
+
+  @@index([saleId])
+}
+
+// ------------------------------------------------------------
+// Référentiels partagés (produits, fournisseurs, emplacements)
+// ------------------------------------------------------------
+
+model Product {
+  id          String          @id @default(cuid())
+  code        String          @unique // D, L, SV...
+  name        String
+  category    ProductCategory
+  unit        String          // kg, liter, piece
+  minThreshold Float          @default(0)
+  defaultPurchasePrice Float  @default(0)
+  archivedAt  DateTime?
+  createdAt   DateTime        @default(now())
+  updatedAt   DateTime        @updatedAt
+
+  prices       PriceGrid[]
+  movements    StockMovement[]
+  sales        Sale[]
+  inventoryLines InventoryLine[]
+}
+
+enum ProductCategory {
+  RAW_MATERIAL // matières premières (raisin, sucre, levures, bouteilles...)
+  FINISHED     // produits finis (vin en vrac par type)
+}
+
+model Supplier {
+  id         String          @id @default(cuid())
+  name       String
+  contact    String?
+  phone      String?
+  archivedAt DateTime?
+  createdAt  DateTime        @default(now())
+
+  movements  StockMovement[]
+}
+
+model Location {
+  id            String          @id @default(cuid())
+  name          String
+  address       String?
+  archivedAt    DateTime?
+  createdAt     DateTime        @default(now())
+
+  movementsFrom  StockMovement[]   @relation("LocationFrom")
+  movementsTo    StockMovement[]   @relation("LocationTo")
+  inventoryLines InventoryLine[]
+}
+
+// ------------------------------------------------------------
+// Module 2 — Stock & production
+// Mouvements immuables (aucune suppression, correction par mouvement inverse)
+// ------------------------------------------------------------
+
+model StockMovement {
+  id             String        @id @default(cuid())
+  productId      String
+  type           MovementType
+  quantity       Float         // signé : + entrée, - sortie
+  unitPrice      Float?
+  supplierId     String?
+  locationFromId String?
+  locationToId   String?
+  motif          String?
+  note           String?
+  date           DateTime      @default(now())
+  createdBy      String
+  createdAt      DateTime      @default(now())
+
+  product        Product       @relation(fields: [productId], references: [id])
+  supplier       Supplier?     @relation(fields: [supplierId], references: [id])
+  locationFrom   Location?     @relation("LocationFrom", fields: [locationFromId], references: [id])
+  locationTo     Location?     @relation("LocationTo", fields: [locationToId], references: [id])
+  user           User          @relation(fields: [createdBy], references: [id])
+
+  @@index([productId])
+  @@index([date])
+}
+
+enum MovementType {
+  IN         // entrée (achat fournisseur)
+  OUT        // sortie (production, vente, perte, casse)
+  TRANSFER   // transfert entre emplacements
+  PRODUCTION // consommation MP + entrée vin
+  ADJUST     // ajustement d'inventaire
+}
+
+model InventoryCount {
+  id        String          @id @default(cuid())
+  date      DateTime        @default(now())
+  note      String?
+  createdBy String
+  createdAt DateTime        @default(now())
+
+  lines     InventoryLine[]
+  user      User            @relation(fields: [createdBy], references: [id])
+}
+
+model InventoryLine {
+  id              String       @id @default(cuid())
+  countId         String
+  productId       String
+  locationId      String?
+  countedQty      Float
+  theoreticalQty  Float
+  diff            Float
+  validated       Boolean      @default(false)
+
+  count           InventoryCount @relation(fields: [countId], references: [id])
+  product         Product      @relation(fields: [productId], references: [id])
+  location        Location?    @relation(fields: [locationId], references: [id])
+}
+
+// ------------------------------------------------------------
+// Module 3 — Achat-vente de marchandises (réservé admins)
+// ------------------------------------------------------------
+
+model Merchandise {
+  id         String           @id @default(cuid())
+  name       String
+  unit       String
+  alertHigh  Float?
+  alertLow   Float?
+  archivedAt DateTime?
+  createdAt  DateTime         @default(now())
+
+  prices     MarketPrice[]
+  operations TradeOperation[]
+}
+
+model MarketPrice {
+  id           String     @id @default(cuid())
+  merchandiseId String
+  price        Float
+  date         DateTime   @default(now())
+  createdBy    String
+
+  merchandise  Merchandise @relation(fields: [merchandiseId], references: [id])
+  user         User        @relation(fields: [createdBy], references: [id])
+
+  @@index([merchandiseId])
+  @@index([date])
+}
+
+model TradeOperation {
+  id            String        @id @default(cuid())
+  type          TradeType
+  merchandiseId String
+  quantity      Float
+  unitPrice     Float
+  fees          Float         @default(0)
+  counterparty  String?
+  paymentMethod PaymentMethod?
+  paymentStatus PaymentStatus
+  note          String?
+  date          DateTime      @default(now())
+  createdBy     String
+
+  merchandise   Merchandise   @relation(fields: [merchandiseId], references: [id])
+  user          User          @relation(fields: [createdBy], references: [id])
+
+  @@index([merchandiseId])
+  @@index([date])
+}
+
+enum TradeType {
+  BUY
+  SELL
+}
+
+// ------------------------------------------------------------
+// Journal d'audit (exigence non fonctionnelle 8.1)
+// ------------------------------------------------------------
+
+model AuditLog {
   id        String   @id @default(cuid())
-  title     String
-  content   String?
-  published Boolean  @default(false)
-  authorId  String
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  userId    String?
+  entity    String
+  entityId  String
+  action    String // CREATE, UPDATE, ARCHIVE
+  summary   String?
+  at        DateTime @default(now())
+
+  user      User?    @relation(fields: [userId], references: [id])
+
+  @@index([entity, entityId])
+  @@index([at])
 }
